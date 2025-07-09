@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from PIL import Image
 from scipy.ndimage import gaussian_filter
 from transformers import SamModel, SamProcessor
-from torch.cuda.amp import autocast
 
 
 def get_bounding_box(ground_truth_map):
@@ -52,33 +51,8 @@ class MaskingProcessor:
         original_image = Image.open(image_path).convert("RGB")
         w, h = original_image.size
 
-        # Check aspect ratio
-        aspect_ratio = w / h
-        target_ratio = 2.0
-        tolerance = 0.05  # 5% tolerance
-
         resized_image_path = image_path
         image = original_image  # Initialize image to original_image
-
-        if abs(aspect_ratio - target_ratio) > tolerance:
-            raise ValueError(
-                f"Image aspect ratio is {aspect_ratio:.2f}:1, which is not close enough to 2:1. Got {w}x{h}. Please provide an image with a 2:1 aspect ratio or one very close to it."
-            )
-        elif aspect_ratio != target_ratio:
-            # Resize image to exactly 2:1 aspect ratio
-            new_width = int(target_ratio * h)
-            image = original_image.resize((new_width, h), Image.LANCZOS)
-
-            # Save the resized image
-            base_name = os.path.basename(image_path)
-            name, ext = os.path.splitext(base_name)
-            resized_image_path = os.path.join(
-                os.path.dirname(image_path), f"resized_{name}{ext}"
-            )
-            image.save(resized_image_path)
-            logging.info(
-                f"Image resized to {new_width}x{h} and saved to {resized_image_path}"
-            )
 
         original_w, original_h = original_image.size  # Store original dimensions
 
@@ -102,9 +76,7 @@ class MaskingProcessor:
                     half_img, input_boxes=[[prompt]], return_tensors="pt"
                 ).to(self.device)
 
-                # Forward pass with mixed precision
-                with autocast():
-                    outputs = self.model(**inputs, multimask_output=False)
+                outputs = self.model(**inputs, multimask_output=False)
 
                 # Post-process mask
                 mask_prob = torch.sigmoid(outputs.pred_masks.squeeze(1))
