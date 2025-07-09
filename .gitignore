@@ -167,6 +167,5 @@ test*.py
 uv.lock
 .python-version
 *.jpg
-*.ipynb
 dataset/
 *.zip
