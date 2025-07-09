@@ -166,3 +166,6 @@ test*.py
 *.pt
 uv.lock
 .python-version
+*.jpg
+*.ipynb
+dataset/

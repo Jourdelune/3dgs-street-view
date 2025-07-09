@@ -80,12 +80,54 @@ class PanoramaxDownloader:
         )
         return grade
 
+    def find_collections(self, limit=1000, bbox=None, filters=None) -> dict:
+        """
+        Finds collections in Panoramax based on specified criteria.
+
+        Args:
+            limit (int, optional): Max number of collections to return. Defaults to 1000.
+            bbox (list, optional): A list of four coordinates representing the bounding
+                                   box [lon_min, lat_min, lon_max, lat_max]. Defaults to None.
+            filters (dict, optional): A dictionary of filters to apply to the search. Defaults to None.
+        Returns:
+            dict: A dictionary where keys are collection IDs and values are collection details.
+                   Returns None if no collections are found or if an error occurs.
+        """
+        search_url = f"{self.BASE_API_URL}/collections"
+        params = {"limit": str(limit)}
+        if bbox:
+            params["bbox"] = ",".join(map(str, bbox))
+        if filters:
+            params["filter"] = " and ".join([f"{k}={v}" for k, v in filters.items()])
+
+        logging.info(f"Searching for collections with params: {params}")
+        try:
+            response = requests.get(search_url, params=params)
+            logging.info(f"API request URL: {response.url}")
+            response.raise_for_status()
+            data = response.json()
+            logging.info(
+                f"Found {len(data.get('collections', []))} collections from API."
+            )
+
+            # merge all collections into a single dictionary
+            collections = {}
+            for collection in data.get("collections", []):
+                collection_id = collection.get("id")
+                collections[collection_id] = collection
+            logging.info(f"Found {len(collections)} collections.")
+            return collections
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"API request failed: {e}")
+            return None
+
     def find_sequence(
         self,
         bbox=None,
         limit=5000,
         min_photos_in_sequence=10,
-        required_quality="B",
+        required_quality="D",
         collection=None,
         field_of_view=None,
     ):
@@ -129,10 +171,12 @@ class PanoramaxDownloader:
         logging.info(f"Searching for sequences with params: {params}")
         try:
             response = requests.get(search_url, params=params)
+            logging.info(f"API request URL: {response.url}")
             response.raise_for_status()
             data = response.json()
-            logging.info(f"Found {len(data.get('features', []))} total photos from API.")
-
+            logging.info(
+                f"Found {len(data.get('features', []))} total photos from API."
+            )
             photos_by_sequence = {}
             for feature in data.get("features", []):
                 pic_id = feature.get("id")
@@ -216,9 +260,7 @@ class PanoramaxDownloader:
             file_path = os.path.join(sequence_download_dir, f"{pic_id}.jpg")
 
             if os.path.exists(file_path):
-                logging.warning(
-                    f"File {file_path} already exists. Skipping download."
-                )
+                logging.warning(f"File {file_path} already exists. Skipping download.")
                 continue
 
             try:
@@ -230,9 +272,7 @@ class PanoramaxDownloader:
                     for chunk in image_response.iter_content(chunk_size=8192):
                         f.write(chunk)
                 logging.info(f"Photo {pic_id} saved to {file_path}")
-                logging.info(
-                    f"Direct link: https://api.panoramax.xyz/?pic={pic['id']}"
-                )
+                logging.info(f"Direct link: https://api.panoramax.xyz/?pic={pic['id']}")
 
             except requests.exceptions.RequestException as e:
                 logging.error(f"Failed to download {pic_id}: {e}")
@@ -266,4 +306,3 @@ if __name__ == "__main__":
         logging.info("Example download finished.")
     else:
         logging.warning("No sequences found for the given criteria.")
-
