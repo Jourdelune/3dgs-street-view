@@ -8,11 +8,15 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "datasets>=3.6.0",
     "fastsam>=0.0.1.dev0",
+    "ipywidgets>=8.1.7",
+    "monai>=1.5.0",
     "opencv-python>=4.12.0.88",
     "requests",
     "segment-anything-fast>=0.1.2",
     "simple-lama-inpainting>=0.1.0",
+    "transformers>=4.53.1",
 ]
 
 [build-system]
