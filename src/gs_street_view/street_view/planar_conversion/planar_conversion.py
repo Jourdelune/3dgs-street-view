@@ -8,12 +8,57 @@ import numpy as np
 from PIL import Image
 from py360convert import (
     e2p,
-)  # Importez la fonction de conversion equirectangulaire vers perspective
+)  # Import the equirectangular to perspective conversion function
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+
+def _crop_top(bound_arr: list, fov: int, crop_factor: float) -> List[float]:
+    """Returns a list of vertical bounds with the bottom cropped."""
+    degrees_chopped = 180 * crop_factor
+    new_bottom_start = 90 - degrees_chopped - fov / 2
+    for i, el in reversed(list(enumerate(bound_arr))):
+        if el is not None and el > new_bottom_start + fov / 2:
+            bound_arr[i] = None
+        elif el is not None and el > new_bottom_start:
+            diff = el - new_bottom_start
+            bound_arr[i] = new_bottom_start
+            for j in range(i - 1, -1, -1):
+                if bound_arr[j] is not None:
+                    bound_arr[j] -= diff / (2 ** (i - j))
+            break
+    return bound_arr
+
+
+def _crop_bottom(bound_arr: list, fov: int, crop_factor: float) -> List[float]:
+    """Returns a list of vertical bounds with the top cropped."""
+    degrees_chopped = 180 * crop_factor
+    new_top_start = -90 + degrees_chopped + fov / 2
+    for i, el in enumerate(bound_arr):
+        if el is not None and el < new_top_start - fov / 2:
+            bound_arr[i] = None
+        elif el is not None and el < new_top_start:
+            diff = new_top_start - el
+            bound_arr[i] = new_top_start
+            for j in range(i + 1, len(bound_arr)):
+                if bound_arr[j] is not None:
+                    bound_arr[j] += diff / (2 ** (j - i))
+            break
+    return bound_arr
+
+
+def _crop_bound_arr_vertical(
+    bound_arr: list, fov: int, crop_factor: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+) -> list:
+    """Returns a list of vertical bounds adjusted for cropping."""
+    if crop_factor[1] > 0:
+        bound_arr = _crop_bottom(bound_arr, fov, crop_factor[1])
+    if crop_factor[0] > 0:
+        bound_arr = _crop_top(bound_arr, fov, crop_factor[0])
+    return bound_arr
 
 
 def compute_resolution_from_equirect(
@@ -68,83 +113,118 @@ def generate_planar_projections_from_equirectangular(
             logging.error("Invalid crop factor. All values must be in [0,1].")
             sys.exit(1)
 
-    if any(c > 0 for c in crop_factor):
-        logging.warning(
-            "Crop factors are not directly applied by py360convert. They will be ignored."
-        )
+    yaw_pitch_pairs = []
+    fov_h = 120  # Default FOV
 
-    fov_h = 120  # Champ de vision horizontal par défaut pour les projections
+    if samples_per_im in [8, 14]:
+        left_bound, right_bound = -180, 180
+        if crop_factor[3] > 0:
+            left_bound = -180 + 360 * crop_factor[3]
+        if crop_factor[2] > 0:
+            right_bound = 180 - 360 * crop_factor[2]
 
-    # Initialisation des listes pour les différents types de vues
-    horizontal_views = []
-    up_views = []
-    down_views = []
+        if samples_per_im == 8:
+            fov_h = 120
+            bound_arr = [-45, 0, 45]
+            bound_arr = _crop_bound_arr_vertical(bound_arr, fov_h, crop_factor)
+            if bound_arr[1] is not None:
+                for i in np.arange(left_bound, right_bound, 90):
+                    yaw_pitch_pairs.append((i, bound_arr[1]))
+            if bound_arr[2] is not None:
+                for i in np.arange(left_bound, right_bound, 180):
+                    yaw_pitch_pairs.append((i, bound_arr[2]))
+            if bound_arr[0] is not None:
+                for i in np.arange(left_bound, right_bound, 180):
+                    yaw_pitch_pairs.append((i, bound_arr[0]))
+        elif samples_per_im == 14:
+            fov_h = 110
+            bound_arr = [-45, 0, 45]
+            bound_arr = _crop_bound_arr_vertical(bound_arr, fov_h, crop_factor)
+            if bound_arr[1] is not None:
+                for i in np.arange(left_bound, right_bound, 60):
+                    yaw_pitch_pairs.append((i, bound_arr[1]))
+            if bound_arr[2] is not None:
+                for i in np.arange(left_bound, right_bound, 90):
+                    yaw_pitch_pairs.append((i, bound_arr[2]))
+            if bound_arr[0] is not None:
+                for i in np.arange(left_bound, right_bound, 90):
+                    yaw_pitch_pairs.append((i, bound_arr[0]))
+    else:
+        if any(c > 0 for c in crop_factor):
+            logging.warning(
+                f"samples_per_im={samples_per_im} is not supported for cropping. Crop will be ignored."
+            )
 
-    # Calcul du nombre de vues pour l'horizon, le haut et le bas
-    # On privilégie l'horizon, puis le haut, puis le bas.
-    remaining_samples = samples_per_im
+        # Initialize lists for different view types
+        horizontal_views = []
+        up_views = []
+        down_views = []
 
-    # --- 1. Génération des vues horizontales (pitch = 0) ---
-    # Essayons de prendre un minimum de 4 vues horizontales pour une bonne couverture de base,
-    # puis distribuons le reste.
-    min_horizontal = min(remaining_samples, 4)  # Au moins 4 si possible
-    num_horizontal_views = min_horizontal
-    if remaining_samples > min_horizontal:
-        # Si plus d'échantillons, essayons d'ajouter des vues horizontales jusqu'à ce que la moitié soit atteinte
-        num_horizontal_views = max(min_horizontal, (samples_per_im + 1) // 2)
-        # On s'assure de ne pas dépasser samples_per_im
-        num_horizontal_views = min(num_horizontal_views, remaining_samples)
+        # Calculate the number of views for the horizon, top, and bottom
+        # We prioritize the horizon, then the top, then the bottom.
+        remaining_samples = samples_per_im
 
-    if num_horizontal_views > 0:
-        yaw_step_horizontal = 360 / num_horizontal_views
-        for i in range(num_horizontal_views):
-            yaw = i * yaw_step_horizontal
-            horizontal_views.append((yaw, 0))  # Pitch 0 pour l'horizon
-        remaining_samples -= len(horizontal_views)
+        # --- 1. Generate horizontal views (pitch = 0) ---
+        # Let's try to take a minimum of 4 horizontal views for good basic coverage,
+        # then distribute the rest.
+        min_horizontal = min(remaining_samples, 4)  # At least 4 if possible
+        num_horizontal_views = min_horizontal
+        if remaining_samples > min_horizontal:
+            # If more samples, let's try to add horizontal views until half is reached
+            num_horizontal_views = max(min_horizontal, (samples_per_im + 1) // 2)
+            # Make sure not to exceed samples_per_im
+            num_horizontal_views = min(num_horizontal_views, remaining_samples)
 
-    # --- 2. Génération des vues du haut (pitch < 0) ---
-    if remaining_samples > 0:
-        num_up_views = (
-            remaining_samples + 1
-        ) // 2  # Moitié restante pour le haut (arrondi vers le haut)
-        # S'assurer qu'il y a au moins 1 vue vers le haut si remaining_samples > 0 et samples_per_im > num_horizontal_views
-        if (
-            num_up_views == 0 and remaining_samples > 0
-        ):  # Pour des cas comme samples_per_im = 1
-            num_up_views = 1
+        if num_horizontal_views > 0:
+            yaw_step_horizontal = 360 / num_horizontal_views
+            for i in range(num_horizontal_views):
+                yaw = i * yaw_step_horizontal
+                horizontal_views.append((yaw, 0))  # Pitch 0 for the horizon
+            remaining_samples -= len(horizontal_views)
 
-        pitch_up = -45  # Angle de tangage vers le haut (ajustable)
+        # --- 2. Generate top views (pitch < 0) ---
+        if remaining_samples > 0:
+            num_up_views = (
+                remaining_samples + 1
+            ) // 2  # Remaining half for the top (rounded up)
+            # Ensure there is at least 1 upward view if remaining_samples > 0 and samples_per_im > num_horizontal_views
+            if (
+                num_up_views == 0 and remaining_samples > 0
+            ):  # For cases like samples_per_im = 1
+                num_up_views = 1
 
-        if num_up_views > 0:
-            yaw_step_up = 360 / num_up_views if num_up_views > 0 else 0
-            for i in range(num_up_views):
-                yaw = i * yaw_step_up
-                up_views.append((yaw, pitch_up))
-            remaining_samples -= len(up_views)
+            pitch_up = -45  # Upward pitch angle (adjustable)
 
-    # --- 3. Génération des vues du bas (pitch > 0) ---
-    if remaining_samples > 0:
-        num_down_views = remaining_samples  # Ce qu'il reste va au bas
+            if num_up_views > 0:
+                yaw_step_up = 360 / num_up_views if num_up_views > 0 else 0
+                for i in range(num_up_views):
+                    yaw = i * yaw_step_up
+                    up_views.append((yaw, pitch_up))
+                remaining_samples -= len(up_views)
 
-        pitch_down = 45  # Angle de tangage vers le bas (ajustable)
+        # --- 3. Generate bottom views (pitch > 0) ---
+        if remaining_samples > 0:
+            num_down_views = remaining_samples  # What's left goes to the bottom
 
-        if num_down_views > 0:
-            yaw_step_down = 360 / num_down_views if num_down_views > 0 else 0
-            for i in range(num_down_views):
-                yaw = i * yaw_step_down
-                down_views.append((yaw, pitch_down))
-            # remaining_samples = 0 ici
+            pitch_down = 45  # Downward pitch angle (adjustable)
 
-    # Combiner les vues dans l'ordre souhaité : horizontal, puis haut, puis bas
-    yaw_pitch_pairs = horizontal_views + up_views + down_views
+            if num_down_views > 0:
+                yaw_step_down = 360 / num_down_views if num_down_views > 0 else 0
+                for i in range(num_down_views):
+                    yaw = i * yaw_step_down
+                    down_views.append((yaw, pitch_down))
+                # remaining_samples = 0 here
 
-    # Assurez-vous que le nombre total de paires ne dépasse pas samples_per_im et supprimez les doublons
-    # (bien que la logique de génération devrait les éviter pour la plupart)
-    yaw_pitch_pairs = list(
-        dict.fromkeys(yaw_pitch_pairs)
-    )  # Conserve l'ordre tout en supprimant les doublons
-    if len(yaw_pitch_pairs) > samples_per_im:
-        yaw_pitch_pairs = yaw_pitch_pairs[:samples_per_im]
+        # Combine the views in the desired order: horizontal, then top, then bottom
+        yaw_pitch_pairs = horizontal_views + up_views + down_views
+
+        # Ensure that the total number of pairs does not exceed samples_per_im and remove duplicates
+        # (although the generation logic should avoid them for the most part)
+        yaw_pitch_pairs = list(
+            dict.fromkeys(yaw_pitch_pairs)
+        )  # Preserves order while removing duplicates
+        if len(yaw_pitch_pairs) > samples_per_im:
+            yaw_pitch_pairs = yaw_pitch_pairs[:samples_per_im]
 
     if not yaw_pitch_pairs:
         logging.error(
