@@ -1,3 +1,4 @@
 from .images import PanoramaxDownloader
-from .masking import MaskingProcessor
 from .inpainting import Inpainter
+from .masking import MaskingProcessor
+from .planar_conversion import *

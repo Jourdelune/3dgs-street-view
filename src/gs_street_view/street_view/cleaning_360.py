@@ -23,6 +23,7 @@ class StreetViewCleaner:
 
             # Aspect ratio correction (moved from masking.py)
             original_image = Image.open(image_path).convert("RGB")
+            metadata = original_image.info  # Extract metadata
             w, h = original_image.size
             aspect_ratio = w / h
             target_ratio = 2.0
@@ -83,7 +84,7 @@ class StreetViewCleaner:
             )
 
             # Step 3: Save the inpainted image
-            inpainted_image.save(output_path)
+            inpainted_image.save(output_path, **metadata)
             logging.info(f"Inpainted image saved to: {output_path}")
 
         logging.info(f"Image cleaning process completed for {image_path}")
