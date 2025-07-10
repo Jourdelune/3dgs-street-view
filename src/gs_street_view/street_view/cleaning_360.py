@@ -51,6 +51,7 @@ class StreetViewCleaner:
         output_path: str,
         sample_per_image: int = 14,
         crop_factors: tuple = (0.0, 0.2, 0.0, 0.0),
+        batch_size: int = 1,
     ):
         logging.info(f"Cleaning image: {image_path}")
 
@@ -80,6 +81,7 @@ class StreetViewCleaner:
                 output_path,
                 sample_per_image,
                 crop_factors,
+                batch_size,
             )
 
         logging.info(f"Image cleaning process completed for {image_path}")
@@ -91,6 +93,7 @@ class StreetViewCleaner:
         output_path: str,
         sample_per_image: int,
         crop_factors: tuple,
+        batch_size: int,
     ):
         logging.info("Generating planar projections from equirectangular image...")
         target_resolution = compute_resolution_from_equirect(
@@ -113,23 +116,26 @@ class StreetViewCleaner:
             crop_factors,
         )
 
-        for i, image_filename in enumerate(os.listdir(output_planar_dir_image)):
-            mask_filename = image_filename.replace("image", "mask")
-            logging.info(f"Processing image: {image_filename} with mask: {mask_filename}")
+        all_image_filenames = os.listdir(output_planar_dir_image)
+        num_images = len(all_image_filenames)
 
-            image_to_inpaint = Image.open(
-                output_planar_dir_image / image_filename
-            ).convert("RGB")
-            mask_for_inpainting = Image.open(
-                output_planar_dir_mask / mask_filename
-            ).convert("L")
+        for i in range(0, num_images, batch_size):
+            batch_image_filenames = all_image_filenames[i : i + batch_size]
+            
+            images_to_inpaint = []
+            masks_for_inpainting = []
 
-            inpainted_image = self.inpainter.inpaint(
-                image_to_inpaint, mask_for_inpainting
-            )
+            for image_filename in batch_image_filenames:
+                mask_filename = image_filename.replace("image", "mask")
+                logging.info(f"Collecting image: {image_filename} with mask: {mask_filename} for batch...")
 
-            output_filename = (
-                Path(original_image_path).stem + f"_{i}.png"
-            )
-            inpainted_image.save(os.path.join(output_path, output_filename))
-            logging.info(f"Inpainted image saved as: {os.path.join(output_path, output_filename)}")
+                images_to_inpaint.append(Image.open(output_planar_dir_image / image_filename).convert("RGB"))
+                masks_for_inpainting.append(Image.open(output_planar_dir_mask / mask_filename).convert("L"))
+
+            inpainted_images = self.inpainter.inpaint(images_to_inpaint, masks_for_inpainting)
+
+            for j, inpainted_image in enumerate(inpainted_images):
+                original_idx = i + j
+                output_filename = (Path(original_image_path).stem + f"_{original_idx}.png")
+                inpainted_image.save(os.path.join(output_path, output_filename))
+                logging.info(f"Inpainted image saved as: {os.path.join(output_path, output_filename)}")
