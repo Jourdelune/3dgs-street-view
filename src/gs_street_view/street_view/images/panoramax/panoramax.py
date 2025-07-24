@@ -254,10 +254,10 @@ class PanoramaxDownloader:
             os.makedirs(sequence_download_dir)
             logging.info(f"Created directory for sequence: {sequence_download_dir}")
 
-        for pic in pictures_to_download:
+        for i, pic in enumerate(pictures_to_download):
             pic_id = pic["id"]
             image_url = pic["url"]
-            file_path = os.path.join(sequence_download_dir, f"{pic_id}.jpg")
+            file_path = os.path.join(sequence_download_dir, f"{i}_{pic_id}.jpg")
 
             if os.path.exists(file_path):
                 logging.warning(f"File {file_path} already exists. Skipping download.")
